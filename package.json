@@ -2,7 +2,7 @@
   "name": "coverse",
   "private": true,
   "version": "0.1.0",
-  "description": "CoVerse — blockchain-powered revenue sharing for collaborative content creation.",
+  "description": "CoVerse \u2014 blockchain-powered revenue sharing for collaborative content creation.",
   "workspaces": [
     "frontend",
     "contracts"
@@ -14,7 +14,9 @@
     "test": "npm run test --workspace frontend && npm run test --workspace contracts",
     "contracts:compile": "npm run compile --workspace contracts",
     "contracts:test": "npm run test --workspace contracts",
-    "contracts:node": "npm run node --workspace contracts"
+    "contracts:node": "npm run node --workspace contracts",
+    "contracts:deploy": "npm run deploy:local --workspace contracts",
+    "contracts:export-abi": "npm run export-abi --workspace contracts"
   },
   "engines": {
     "node": ">=20"

@@ -20,10 +20,9 @@ export function Hero() {
           transparently between every collaborator.
         </p>
         <div className="hero-actions">
-          <button className="btn btn-primary btn-lg" disabled title="Coming in a later milestone">
+          <a className="btn btn-primary btn-lg" href="#live">
             <Plus size={18} aria-hidden="true" /> Start a collaboration
-            <span className="soon">Soon</span>
-          </button>
+          </a>
           <a className="btn btn-ghost btn-lg" href="#splits">
             See how splits work <ArrowRight size={18} aria-hidden="true" />
           </a>

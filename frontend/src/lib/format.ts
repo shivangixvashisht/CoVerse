@@ -33,3 +33,8 @@ export function initials(name: string): string {
 export function totalBps(shares: { shareBps: number }[]): number {
   return shares.reduce((sum, s) => sum + s.shareBps, 0);
 }
+
+/** Case-insensitive address comparison (checksummed vs lower-case). */
+export function sameAddress(a: string | null | undefined, b: string | null | undefined): boolean {
+  return !!a && !!b && a.toLowerCase() === b.toLowerCase();
+}

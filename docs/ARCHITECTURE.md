@@ -12,16 +12,47 @@ build output (or generated TypeChain types) rather than copied by hand.
 
 ## Frontend
 
-- **Data:** all dashboard content comes from `src/data/demo.ts` and is labelled "Demo data" in the UI (a page-level
-  banner plus per-panel tags). `src/data/selectors.ts` derives the summary figures from that data, so the numbers stay
-  internally consistent. **The frontend does not read from or write to the contract yet** — there is no in-app
-  deposit, claim, proposal or voting flow, and no wallet payments are made from the UI.
-- **Wallet:** `src/hooks/useWallet.ts` wraps MetaMask's EIP-1193 provider with ethers.js `BrowserProvider`. It only
-  calls `eth_accounts`, `eth_requestAccounts` and `eth_chainId`, and reacts to `accountsChanged` / `chainChanged`.
-  ethers is lazy-loaded so it isn't in the initial bundle. A test asserts no other RPC methods are called.
-- **Styling:** plain CSS with design tokens in `src/styles/global.css`. Dark theme by default, light theme via
-  `prefers-color-scheme`. Chart and split colours use a fixed categorical order checked for colour-blind separation;
-  every chart has a text/table equivalent.
+- **Live workspace** (`src/components/live/`) — the only part of the UI that shows blockchain data. It is lazy-loaded
+  (with ethers.js) and gated step by step: MetaMask installed → wallet connected → wallet on Hardhat Local (31337) →
+  contract address configured → contract code present at that address. Each failed step explains how to fix it.
+- **Design preview** — stats, earnings chart, demo projects and activity come from `src/data/demo.ts` and are tagged
+  *Demo data*. A page banner and a divider separate them from the Live workspace.
+- **Wallet:** `src/hooks/useWallet.ts` wraps MetaMask's EIP-1193 provider (account, chain, connect, account/chain change
+  events). `src/lib/network.ts` asks MetaMask to switch to — or add — Hardhat Local.
+- **Styling:** plain CSS with design tokens in `src/styles/global.css`; dark by default, light via
+  `prefers-color-scheme`; responsive from 360px phones to desktop.
+
+### Frontend ↔ contract integration
+
+```
+MetaMask (EIP-1193) ──► ethers BrowserProvider ──► registryClient.ts ──► CollaborationRegistry (local node)
+        ▲                       │ reads (eth_call)        │ writes (signed by the connected account)
+        │                       ▼                         ▼
+   user signs            LiveDashboard / ProjectDetailView / ProposalCard / RevenuePanel
+                         useTransaction: signing → pending (hash) → confirmed | failed (txErrors.ts)
+```
+
+- **Contract interface.** `frontend/src/contracts/CollaborationRegistry.abi.json` is generated from the Hardhat artifact
+  by `npm run contracts:export-abi`. A contract test fails if it drifts from the compiled contract.
+- **Address & network configuration.** `src/config/deployment.ts` resolves the address from `VITE_REGISTRY_ADDRESS`
+  (explicit override) or `/deployments/31337.json` (written by `npm run contracts:deploy`, git-ignored). It validates the
+  address and chain, and only test chains are accepted (`src/config/network.ts`: 31337). The workspace then checks
+  `eth_getCode` so a stale address after a node restart is detected rather than silently failing.
+- **Reads.** `registryClient.loadProject` reads the project, every agreement version (`getAgreement`), every proposal
+  of the project with its proposed splits, required approvers and **each approver's vote via `voteOf`**, deposits, and
+  balances for the connected account. Because the contract has no per-project index, proposals and deposits are found by
+  scanning `1..proposalCount` / `1..depositCount` — fine locally, an indexer is needed at scale (no contract change
+  required). State is re-read after each confirmed transaction and on each new block.
+- **Writes.** `createProject`, `proposeAgreement`, `approveProposal`, `rejectProposal`, `cancelProposal`,
+  `activateProposal`, `deposit(projectId, expectedVersion)` with `expectedVersion` = the active version displayed, and
+  `claim` / `claimAll`, which always pay the connected wallet. Before every write the client re-checks the wallet's
+  chain (`WrongNetworkError`).
+- **UI shows only what the contract allows.** Approve/Reject only for a required approver who has not voted; Activate
+  only when the contract reports `approvalCount == requiredCount`; Cancel only for the proposer; Propose only for active
+  contributors (or the creator before v1). The contract still enforces every rule.
+- **Errors.** `src/lib/txErrors.ts` maps wallet rejection (4001 / `ACTION_REJECTED`), wrong network, insufficient funds,
+  stale nonces after a node restart, unreachable RPC, and **every custom contract error** (decoded via the ABI) to
+  plain-language messages. A mined transaction is only reported as confirmed if its receipt status is 1.
 
 ## Implemented vs planned
 
@@ -31,7 +62,10 @@ build output (or generated TypeChain types) rather than copied by hand.
 | ETH revenue deposits attributed to the active agreement version | **Implemented & tested** (contract) |
 | Per-contributor entitlements, claims, rounding remainder handling | **Implemented & tested** (contract) |
 | Removed contributors keep earlier earnings; get nothing from later versions | **Implemented & tested** (contract) |
-| Frontend: read agreements / balances, deposit, claim, propose, vote | Planned — not built |
+| Web app: create projects, propose, approve/reject/cancel/activate, view versions | **Implemented & tested** (local Hardhat chain) |
+| Web app: deposit test ETH, claim own earnings, deposit history | **Implemented & tested** (local Hardhat chain) |
+| Web app: dashboard stats, earnings chart, activity feed | Demo data only (design preview) |
+| Indexer / event-based history for large datasets | Planned |
 | ERC-20 / stablecoin revenue | Planned — not built |
 | Key loss / address rotation, proposal expiry, dispute resolution | Planned — not designed |
 | Public testnet deployment, external audit | Planned |
@@ -199,7 +233,8 @@ reverts and the balance stays claimable.
 ## Not yet designed / implemented
 
 - ERC-20 / stablecoin revenue
-- Frontend flows for deposits, claims, creating proposals and voting
+- Indexer for proposals/deposits (the UI scans contract counters, which is fine locally but not at scale)
+- Live data for the dashboard stats, earnings chart and activity feed (currently demo data)
 - Indexing / reading contract events in the UI
 - Key loss / address rotation, proposal expiry, dispute resolution
 - Target chain selection, audits and deployment process

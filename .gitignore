@@ -24,3 +24,6 @@ npm-debug.log*
 .vscode/*
 !.vscode/extensions.json
 .idea/
+
+# Local deployment addresses (change on every `hardhat node` restart)
+frontend/public/deployments/*.json

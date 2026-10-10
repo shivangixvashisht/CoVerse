@@ -33,9 +33,9 @@ describe("App", () => {
     expect(screen.getAllByText(/demo data/i).length).toBeGreaterThan(0);
   });
 
-  it("does not offer actions that are not implemented yet", () => {
+  it("sends 'Start a collaboration' to the live on-chain workspace", () => {
     render(<App />);
-    expect(screen.getByRole("button", { name: /start a collaboration/i })).toBeDisabled();
+    expect(screen.getByRole("link", { name: /start a collaboration/i })).toHaveAttribute("href", "#live");
   });
 
   it("filters projects by content type", async () => {
@@ -70,9 +70,10 @@ describe("wallet connection", () => {
     const walletButton = await screen.findByRole("button", { name: /0x1234…5678/ });
     await userEvent.click(walletButton);
     expect(screen.getByText("Hardhat Local")).toBeInTheDocument();
-    // Read-only: only account and network queries, never signing or sending.
+    // Connecting never signs or sends anything; transactions only happen on explicit user actions.
     const methods = vi.mocked(window.ethereum!.request).mock.calls.map(([a]) => a.method);
-    expect(methods.every((m) => ["eth_accounts", "eth_requestAccounts", "eth_chainId", "net_version"].includes(m))).toBe(true);
+    expect(methods).toContain("eth_requestAccounts");
+    expect(methods.some((m) => /sendTransaction|sign/i.test(m))).toBe(false);
   });
 
   it("shows a friendly message when the user rejects the request", async () => {
@@ -83,6 +84,8 @@ describe("wallet connection", () => {
     });
     render(<App />);
     await userEvent.click(screen.getByRole("button", { name: /connect wallet/i }));
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/rejected/i));
+    // Shown both in the header and in the Live workspace's connect prompt.
+    await waitFor(() => expect(screen.getAllByRole("alert")[0]).toHaveTextContent(/rejected/i));
+    expect(screen.getAllByRole("alert").every((a) => /rejected/i.test(a.textContent ?? ""))).toBe(true);
   });
 });

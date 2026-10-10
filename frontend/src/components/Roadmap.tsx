@@ -1,4 +1,4 @@
-import { CheckCircle2, Hammer } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 
 const STEPS = [
   {
@@ -9,15 +9,15 @@ const STEPS = [
   },
   {
     title: "Agree on a split",
-    body: "Every contributor approves each version of the split from their own wallet. The contract logic is built and tested; the in-app flow is next.",
-    state: "In development",
-    icon: Hammer,
+    body: "Create a project, propose changes, and approve or reject each version from your own wallet in the Live workspace. Works on the local Hardhat test network.",
+    state: "Available (local test network)",
+    icon: CheckCircle2,
   },
   {
     title: "Claim your earnings",
-    body: "Revenue deposited on-chain is credited by the agreed split, and each contributor claims their own share. Built and tested in the contract on a local test chain; not yet available in the app.",
-    state: "In development",
-    icon: Hammer,
+    body: "Deposit test ETH to a project and each contributor claims their own share in the Live workspace. Local test network only — public deployment and real payments are not available.",
+    state: "Available (local test network)",
+    icon: CheckCircle2,
   },
 ];
 
@@ -36,7 +36,7 @@ export function Roadmap() {
             <div>
               <div className="step-title">
                 <h3>{title}</h3>
-                <span className={`pill pill-${state.replace(/\s+/g, "-").toLowerCase()}`}>
+                <span className={`pill ${state.startsWith("Available") ? "pill-available" : "pill-planned"}`}>
                   <Icon size={12} aria-hidden="true" /> {state}
                 </span>
               </div>

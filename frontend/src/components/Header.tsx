@@ -11,8 +11,8 @@ export function Header({ wallet }: { wallet: ReturnType<typeof useWallet> }) {
           <a href="#overview" aria-current="page">
             Dashboard
           </a>
-          <a href="#projects">Projects</a>
-          <a href="#splits">Splits</a>
+          <a href="#live">Live</a>
+          <a href="#projects">Demo projects</a>
           <a href="#roadmap">Roadmap</a>
         </nav>
         <WalletButton {...wallet} />

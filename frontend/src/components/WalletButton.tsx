@@ -1,7 +1,9 @@
-import { AlertTriangle, ChevronDown, LogOut, Wallet } from "lucide-react";
+import { AlertTriangle, ArrowLeftRight, ChevronDown, LogOut, Wallet } from "lucide-react";
 import { useState } from "react";
 import type { useWallet } from "../hooks/useWallet";
+import { isSupportedChain, LOCAL_CHAIN } from "../config/network";
 import { chainName, isTestChain } from "../lib/chains";
+import { switchToLocalChain } from "../lib/network";
 import { shortenAddress } from "../lib/format";
 
 type Props = ReturnType<typeof useWallet>;
@@ -52,10 +54,22 @@ export function WalletButton({ status, account, chainId, error, connect, disconn
             <span className="muted">Network</span>
             <span>{chainName(chainId)}</span>
           </div>
+          {!isSupportedChain(chainId) && (
+            <button
+              className="wallet-menu-item"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                switchToLocalChain().catch(() => undefined);
+              }}
+            >
+              <ArrowLeftRight size={14} aria-hidden="true" /> Switch to {LOCAL_CHAIN.name}
+            </button>
+          )}
           {!testnet && (
             <p className="wallet-warn">
-              <AlertTriangle size={14} aria-hidden="true" /> CoVerse is in early development. Use a test network —
-              no transactions are sent from this app yet.
+              <AlertTriangle size={14} aria-hidden="true" /> CoVerse is in early development and only works on the
+              local Hardhat test network. Never use real funds.
             </p>
           )}
           <button
