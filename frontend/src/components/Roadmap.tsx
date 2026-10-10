@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleDashed, Hammer } from "lucide-react";
+import { CheckCircle2, Hammer } from "lucide-react";
 
 const STEPS = [
   {
@@ -14,10 +14,10 @@ const STEPS = [
     icon: Hammer,
   },
   {
-    title: "Get paid automatically",
-    body: "Revenue arriving on-chain is distributed by the agreed split. Not built yet — no funds are handled today.",
-    state: "Planned",
-    icon: CircleDashed,
+    title: "Claim your earnings",
+    body: "Revenue deposited on-chain is credited by the agreed split, and each contributor claims their own share. Built and tested in the contract on a local test chain; not yet available in the app.",
+    state: "In development",
+    icon: Hammer,
   },
 ];
 

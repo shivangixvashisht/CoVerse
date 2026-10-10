@@ -544,7 +544,7 @@ describe("CollaborationRegistry", () => {
   });
 
   // -------------------------------------------------------------------------
-  it("cannot receive ETH (no funds are handled in this milestone)", async () => {
+  it("rejects plain ETH transfers (revenue must go through deposit)", async () => {
     const { registry, creator } = await loadFixture(deployFixture);
     await expect(creator.sendTransaction({ to: await registry.getAddress(), value: 1n })).to.be.reverted;
   });

@@ -2,14 +2,17 @@
 pragma solidity ^0.8.24;
 
 /// @title CollaborationRegistry
-/// @notice Records collaborative content projects and their revenue-split agreements.
+/// @notice Records collaborative content projects, their revenue-split agreements, and
+///         the revenue (native ETH) deposited for them.
 ///
 ///         Agreements are versioned and immutable. A new version only becomes active
 ///         after every required contributor has approved it with a transaction from
 ///         their own wallet. Historical versions are never modified or deleted.
 ///
-///         This contract does NOT hold, receive or distribute funds. Revenue accounting
-///         and claims are out of scope for this milestone; see docs/ARCHITECTURE.md.
+///         Each deposit is attributed to the agreement version active at the time and is
+///         fully allocated to that version's contributors when it arrives. Contributors
+///         withdraw their own balances with `claim` / `claimAll` (pull payments).
+///         Not audited — local test networks only. See docs/ARCHITECTURE.md.
 contract CollaborationRegistry {
     // ---------------------------------------------------------------------
     // Constants & types
@@ -65,6 +68,14 @@ contract CollaborationRegistry {
         uint64 activatedBlock;
     }
 
+    struct Deposit {
+        uint256 projectId;
+        uint32 version;
+        address depositor;
+        uint256 amount;
+        uint64 depositedAt;
+    }
+
     struct Proposal {
         uint256 projectId;
         address proposer;
@@ -96,6 +107,19 @@ contract CollaborationRegistry {
     mapping(uint256 proposalId => mapping(address => bool)) private _isRequired;
     mapping(uint256 proposalId => mapping(address => Vote)) private _votes;
 
+    // Revenue accounting. Invariant: address(this).balance ==
+    //   sum over projects of (_totalDeposited - _totalClaimed) == sum of all unclaimed balances.
+    uint256 public depositCount;
+    mapping(uint256 depositId => Deposit) private _deposits;
+    mapping(uint256 projectId => mapping(uint32 version => uint256)) private _versionRevenue;
+    mapping(uint256 projectId => mapping(uint32 version => mapping(address => uint256))) private _earnedInVersion;
+    mapping(uint256 projectId => mapping(address => uint256)) private _earned;
+    mapping(uint256 projectId => mapping(address => uint256)) private _claimed;
+    mapping(uint256 projectId => uint256) private _totalDeposited;
+    mapping(uint256 projectId => uint256) private _totalClaimed;
+
+    uint256 private _lock = 1;
+
     // ---------------------------------------------------------------------
     // Events
     // ---------------------------------------------------------------------
@@ -118,6 +142,17 @@ contract CollaborationRegistry {
     event ProposalRejected(uint256 indexed projectId, uint256 indexed proposalId, address indexed rejecter);
     event ProposalCancelled(uint256 indexed projectId, uint256 indexed proposalId, address indexed proposer);
     event AgreementActivated(uint256 indexed projectId, uint32 indexed version, uint256 indexed proposalId);
+    event RevenueDeposited(
+        uint256 indexed projectId,
+        uint32 indexed version,
+        uint256 indexed depositId,
+        address depositor,
+        uint256 amount
+    );
+    /// @notice The rounding remainder of a deposit (always fewer wei than the number of
+    ///         contributors) was credited to `recipient`, the largest-share contributor.
+    event RemainderAllocated(uint256 indexed projectId, uint256 indexed depositId, address indexed recipient, uint256 amount);
+    event RevenueClaimed(uint256 indexed projectId, address indexed contributor, uint256 amount);
 
     // ---------------------------------------------------------------------
     // Errors
@@ -141,6 +176,26 @@ contract CollaborationRegistry {
     error ProposalSuperseded(uint256 proposalId);
     error MissingApprovals(uint32 approvals, uint32 required);
     error NotProposer(address account);
+    error NoActiveAgreement(uint256 projectId);
+    error VersionMismatch(uint32 expected, uint32 active);
+    error ZeroDeposit();
+    error ZeroClaim();
+    error NothingToClaim();
+    error InsufficientBalance(uint256 available, uint256 requested);
+    error TransferFailed();
+    error DepositNotFound(uint256 depositId);
+    error ReentrantCall();
+
+    // ---------------------------------------------------------------------
+    // Modifiers
+    // ---------------------------------------------------------------------
+
+    modifier nonReentrant() {
+        if (_lock != 1) revert ReentrantCall();
+        _lock = 2;
+        _;
+        _lock = 1;
+    }
 
     // ---------------------------------------------------------------------
     // Proposing
@@ -241,6 +296,69 @@ contract CollaborationRegistry {
     }
 
     // ---------------------------------------------------------------------
+    // Revenue
+    // ---------------------------------------------------------------------
+
+    /// @notice Deposit native ETH revenue for a project. It is attributed to the active
+    ///         agreement version and allocated to that version's contributors immediately.
+    /// @param expectedVersion The version the depositor intends to fund. The call reverts if
+    ///        a different version is active, so a deposit can never land under a split the
+    ///        depositor did not expect (e.g. if a new version activates in the same block).
+    function deposit(uint256 projectId, uint32 expectedVersion) external payable nonReentrant returns (uint256 depositId) {
+        uint32 version = _project(projectId).activeVersion;
+        if (version == 0) revert NoActiveAgreement(projectId);
+        if (version != expectedVersion) revert VersionMismatch(expectedVersion, version);
+        uint256 amount = msg.value;
+        if (amount == 0) revert ZeroDeposit();
+
+        depositId = ++depositCount;
+        _deposits[depositId] = Deposit({
+            projectId: projectId,
+            version: version,
+            depositor: msg.sender,
+            amount: amount,
+            depositedAt: uint64(block.timestamp)
+        });
+        _versionRevenue[projectId][version] += amount;
+        _totalDeposited[projectId] += amount;
+        emit RevenueDeposited(projectId, version, depositId, msg.sender, amount);
+
+        // Allocate floor(amount * share / TOTAL_BPS) to each contributor; the sum can only
+        // fall short of `amount`, never exceed it.
+        Split[] storage splits = _versionSplits[projectId][version];
+        uint256 allocated;
+        uint256 largest;
+        for (uint256 i = 0; i < splits.length; i++) {
+            uint256 portion = (amount * splits[i].shareBps) / TOTAL_BPS;
+            allocated += portion;
+            _credit(projectId, version, splits[i].contributor, portion);
+            if (splits[i].shareBps > splits[largest].shareBps) largest = i;
+        }
+
+        // Credit the remainder explicitly so every wei of the deposit is allocated.
+        uint256 remainder = amount - allocated;
+        if (remainder != 0) {
+            address recipient = splits[largest].contributor;
+            _credit(projectId, version, recipient, remainder);
+            emit RemainderAllocated(projectId, depositId, recipient, remainder);
+        }
+    }
+
+    /// @notice Withdraw `amount` of the caller's own unclaimed earnings from a project.
+    ///         Funds are only ever sent to `msg.sender`.
+    function claim(uint256 projectId, uint256 amount) external nonReentrant {
+        if (amount == 0) revert ZeroClaim();
+        _claim(projectId, amount);
+    }
+
+    /// @notice Withdraw all of the caller's unclaimed earnings from a project.
+    function claimAll(uint256 projectId) external nonReentrant returns (uint256 amount) {
+        amount = claimable(projectId, msg.sender);
+        if (amount == 0) revert NothingToClaim();
+        _claim(projectId, amount);
+    }
+
+    // ---------------------------------------------------------------------
     // Views
     // ---------------------------------------------------------------------
 
@@ -283,6 +401,41 @@ contract CollaborationRegistry {
     function getProposal(uint256 proposalId) external view returns (Proposal memory p) {
         p = _proposal(proposalId);
         if (p.status == ProposalStatus.Pending && _isSuperseded(p)) p.status = ProposalStatus.Superseded;
+    }
+
+    /// @notice Unclaimed earnings of `account` in a project (across all versions).
+    function claimable(uint256 projectId, address account) public view returns (uint256) {
+        _project(projectId);
+        return _earned[projectId][account] - _claimed[projectId][account];
+    }
+
+    /// @notice Lifetime earnings and amount already claimed by `account` in a project.
+    function balanceOf(uint256 projectId, address account) external view returns (uint256 earned, uint256 claimed) {
+        _project(projectId);
+        return (_earned[projectId][account], _claimed[projectId][account]);
+    }
+
+    /// @notice What `account` earned from deposits attributed to one agreement version.
+    function earnedInVersion(uint256 projectId, uint32 version, address account) external view returns (uint256) {
+        _requireVersion(projectId, version);
+        return _earnedInVersion[projectId][version][account];
+    }
+
+    /// @notice Total revenue deposited while `version` was active.
+    function versionRevenue(uint256 projectId, uint32 version) external view returns (uint256) {
+        _requireVersion(projectId, version);
+        return _versionRevenue[projectId][version];
+    }
+
+    /// @notice Project-level totals. `deposited - claimed` is held by this contract.
+    function projectRevenue(uint256 projectId) external view returns (uint256 deposited, uint256 claimed) {
+        _project(projectId);
+        return (_totalDeposited[projectId], _totalClaimed[projectId]);
+    }
+
+    function getDeposit(uint256 depositId) external view returns (Deposit memory) {
+        if (depositId == 0 || depositId > depositCount) revert DepositNotFound(depositId);
+        return _deposits[depositId];
     }
 
     function getProposedSplits(uint256 proposalId) external view returns (Split[] memory) {
@@ -336,6 +489,31 @@ contract CollaborationRegistry {
         p.requiredCount = uint32(_requiredApprovers[proposalId].length);
 
         emit ProposalCreated(projectId, proposalId, msg.sender, baseVersion, p.requiredCount);
+    }
+
+    function _credit(uint256 projectId, uint32 version, address account, uint256 amount) private {
+        if (amount == 0) return;
+        _earned[projectId][account] += amount;
+        _earnedInVersion[projectId][version][account] += amount;
+    }
+
+    /// @dev Checks-effects-interactions: balances are updated before the ETH transfer, and
+    ///      callers are additionally guarded by `nonReentrant`. A failed transfer reverts the
+    ///      whole call, leaving the balance claimable.
+    function _claim(uint256 projectId, uint256 amount) private {
+        uint256 available = claimable(projectId, msg.sender);
+        if (amount > available) revert InsufficientBalance(available, amount);
+
+        _claimed[projectId][msg.sender] += amount;
+        _totalClaimed[projectId] += amount;
+        emit RevenueClaimed(projectId, msg.sender, amount);
+
+        (bool ok, ) = payable(msg.sender).call{value: amount}("");
+        if (!ok) revert TransferFailed();
+    }
+
+    function _requireVersion(uint256 projectId, uint32 version) private view {
+        if (version == 0 || version > _project(projectId).activeVersion) revert VersionNotFound(projectId, version);
     }
 
     function _addRequired(uint256 proposalId, address account) private {

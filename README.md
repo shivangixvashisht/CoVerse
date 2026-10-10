@@ -6,8 +6,9 @@ CoVerse is a blockchain-powered revenue-sharing platform for collaborative conte
 documentaries, docuseries, long-form video, short-form video and podcasts. Collaborators agree on how revenue is split,
 the split is recorded on-chain, and (in later milestones) incoming revenue is distributed automatically.
 
-> **Status: Milestone 2 — agreement lifecycle (contracts).** The dashboard still shows **demo data only** and does not
-> talk to the contract yet. Wallet connection (read-only) works; nothing is deployed, and no funds are handled.
+> **Status: Milestone 3 — revenue accounting & claims (contracts).** The smart contract now accepts test-ETH
+> deposits and lets contributors claim their earnings, verified by Hardhat tests on a local chain. The dashboard still
+> shows **demo data only** and does not talk to the contract; no payments can be made from the UI. Nothing is deployed.
 
 ## Current state
 
@@ -15,13 +16,15 @@ the split is recorded on-chain, and (in later milestones) incoming revenue is di
 | --- | --- |
 | Frontend (React + Vite + TypeScript, browser web app) | Landing/dashboard with clearly labelled demo data |
 | MetaMask connection (ethers.js v6) | Read-only: requests account access and reads the network |
-| `CollaborationRegistry.sol` | Versioned, immutable revenue-split agreements. Changes are proposed, then need an on-chain approval from **every** affected contributor's own wallet before activating. **Holds no funds.** |
+| `CollaborationRegistry.sol` — agreements | Versioned, immutable revenue-split agreements. Changes are proposed, then need an on-chain approval from **every** affected contributor's own wallet before activating. |
+| `CollaborationRegistry.sol` — revenue | ETH deposits attributed to the active agreement version; per-contributor balances with explicit rounding remainder; pull-based, reentrancy-safe claims. Removed contributors keep earlier earnings. |
 | Contract tests (Hardhat + Chai) | Passing — see `contracts/test/` |
 | Deployments | None. Local Hardhat network only. |
-| Revenue accounting / payouts | Not implemented — so no revenue protection exists yet |
-| UI for proposals and voting | Not implemented |
+| UI for deposits, claims, proposals and voting | Not implemented |
+| ERC-20 revenue, audit, public deployment | Not implemented |
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the agreement state machine, rules and security assumptions.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the agreement state machine, revenue accounting, rounding rules,
+security assumptions, and what is implemented vs planned.
 
 ## Repository layout
 

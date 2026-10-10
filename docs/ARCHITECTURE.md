@@ -14,13 +14,27 @@ build output (or generated TypeChain types) rather than copied by hand.
 
 - **Data:** all dashboard content comes from `src/data/demo.ts` and is labelled "Demo data" in the UI (a page-level
   banner plus per-panel tags). `src/data/selectors.ts` derives the summary figures from that data, so the numbers stay
-  internally consistent. **The frontend does not read from or write to the contract yet.**
+  internally consistent. **The frontend does not read from or write to the contract yet** — there is no in-app
+  deposit, claim, proposal or voting flow, and no wallet payments are made from the UI.
 - **Wallet:** `src/hooks/useWallet.ts` wraps MetaMask's EIP-1193 provider with ethers.js `BrowserProvider`. It only
   calls `eth_accounts`, `eth_requestAccounts` and `eth_chainId`, and reacts to `accountsChanged` / `chainChanged`.
   ethers is lazy-loaded so it isn't in the initial bundle. A test asserts no other RPC methods are called.
 - **Styling:** plain CSS with design tokens in `src/styles/global.css`. Dark theme by default, light theme via
   `prefers-color-scheme`. Chart and split colours use a fixed categorical order checked for colour-blind separation;
   every chart has a text/table equivalent.
+
+## Implemented vs planned
+
+| Capability | Status |
+| --- | --- |
+| Versioned agreements, proposals, per-wallet approvals/rejections, unanimous activation | **Implemented & tested** (contract) |
+| ETH revenue deposits attributed to the active agreement version | **Implemented & tested** (contract) |
+| Per-contributor entitlements, claims, rounding remainder handling | **Implemented & tested** (contract) |
+| Removed contributors keep earlier earnings; get nothing from later versions | **Implemented & tested** (contract) |
+| Frontend: read agreements / balances, deposit, claim, propose, vote | Planned — not built |
+| ERC-20 / stablecoin revenue | Planned — not built |
+| Key loss / address rotation, proposal expiry, dispute resolution | Planned — not designed |
+| Public testnet deployment, external audit | Planned |
 
 ## Contracts: agreement lifecycle (`CollaborationRegistry.sol`)
 
@@ -79,7 +93,8 @@ state-changing call on it reverts with `ProposalSuperseded`.
 8. **History is append-only.** A version's splits are written once, at activation, to a new version number. No
    function modifies or deletes a version; a proposal can only activate once, and only on top of the version it was
    based on.
-9. **No funds.** There are no payable functions and no `receive`/`fallback`, so the contract cannot hold ETH.
+9. **ETH only via `deposit`.** There is no `receive`/`fallback`, so plain ETH transfers revert; the only payable
+   function is `deposit` (see *Revenue accounting* below).
 
 ### Events
 
@@ -92,16 +107,81 @@ state-changing call on it reverts with `ProposalSuperseded`.
 | `ProposalCancelled(projectId, proposalId, proposer)` | The proposer withdraws a pending proposal. |
 | `AgreementActivated(projectId, version, proposalId)` | A fully approved proposal becomes the new version. |
 
-### Removed contributors and revenue (not yet implemented)
+## Contracts: revenue accounting and claims
 
-**Revenue accounting and claims do not exist yet, so no revenue protection is provided today.** The contract
-lays the groundwork: each version records its splits and the block/time it activated, and old versions remain readable
-(`getAgreement`, `shareInVersion`). The intended design for a later milestone is that revenue is attributed to the
-version active when it is received, so a removed contributor keeps any entitlement accrued under earlier versions but
-receives nothing under versions that exclude them. That behaviour must be implemented and tested before it can be
-relied on.
+### Deposits
+
+`deposit(projectId, expectedVersion)` is `payable` and may be called by anyone (e.g. a distributor). It reverts with:
+
+- `ProjectNotFound` — unknown project;
+- `NoActiveAgreement` — no agreement has been activated yet;
+- `VersionMismatch(expected, active)` — the active version is not the one the depositor intended to fund. This protects
+  depositors from a new version activating just before their transaction (same block / front-running);
+- `ZeroDeposit` — `msg.value == 0`.
+
+A successful deposit is stored (`getDeposit`: project, version, depositor, amount, time), added to
+`versionRevenue(projectId, version)` and emits `RevenueDeposited(projectId, version, depositId, depositor, amount)`.
+
+### Attribution and entitlements
+
+Each deposit is **allocated immediately** using the shares of the version active at deposit time, which are immutable.
+For each contributor of that version:
+
+```
+portion_i = floor(amount × shareBps_i / 10 000)
+```
+
+and the portion is credited to the contributor's project balance and to `earnedInVersion(projectId, version, account)`.
+Because versions never change and later deposits use later versions:
+
+- **Removed contributors keep everything already credited** and can claim it at any time — claims do not require being
+  an active contributor.
+- **Removed contributors receive nothing from deposits made under later versions** that exclude them, and newly added
+  contributors receive nothing from deposits made before they joined.
+- Deposits made while a proposal is pending go to the current (old) version — a proposal changes nothing until activated.
+
+### Rounding
+
+`Σ floor(...)` can fall short of `amount` by at most *(number of contributors − 1)* wei; it can never exceed it. The
+shortfall (`remainder = amount − Σ portion_i`) is credited **explicitly** to the contributor with the **largest share in
+that version** (the first listed on a tie) and emits `RemainderAllocated(projectId, depositId, recipient, remainder)`.
+So every deposit is allocated exactly — nothing more, nothing less, and no unaccounted dust.
+
+**Invariant (tested):** the contract's ETH balance equals the sum of all contributors' unclaimed balances across all
+projects, and each project's total allocations equal its total deposits.
+
+### Claims
+
+- `claim(projectId, amount)` — withdraw part of the caller's unclaimed balance. Reverts `ZeroClaim` for 0 and
+  `InsufficientBalance(available, requested)` if `amount` exceeds the balance.
+- `claimAll(projectId)` — withdraw everything; reverts `NothingToClaim` if the balance is 0.
+- Funds are only ever sent to `msg.sender`, from `msg.sender`'s own balance, so **only the entitled wallet can claim its
+  earnings** and no one can claim for (or redirect) someone else's balance.
+- Views: `claimable`, `balanceOf` (earned, claimed), `earnedInVersion`, `versionRevenue`, `projectRevenue`.
+- Emits `RevenueClaimed(projectId, contributor, amount)`.
+
+**Reentrancy safety:** claims follow checks-effects-interactions — the balance is checked, the claimed amount and totals
+are updated and the event emitted *before* the ETH transfer — and `deposit`, `claim` and `claimAll` also carry a
+`nonReentrant` guard. Tests use a malicious contributor contract that re-enters `claimAll` from its `receive` hook; the
+re-entry is rejected and it is paid exactly once. If the transfer fails (recipient cannot accept ETH) the whole claim
+reverts and the balance stays claimable.
 
 ### Security assumptions and known limitations
+
+*Revenue-related:*
+
+- **Rounding remainder policy.** Up to *(contributors − 1)* wei per deposit goes to the largest-share contributor. This
+  is deterministic and documented but slightly favours that contributor.
+- **Wallets that cannot receive ETH cannot claim.** Claims pay `msg.sender` only (there is no "claim to another
+  address"), so a contract wallet that rejects ETH keeps its balance locked until it can accept ETH.
+- **Lost keys lock earnings.** Unclaimed balances of a lost wallet cannot be recovered; there is no admin or rescue
+  function (by design — no one can move contributors' funds).
+- **Deposit gas grows with contributors** (one storage update per contributor, max 50). A 50-contributor deposit is
+  tested to use under 3M gas.
+- **Native ETH only.** No ERC-20 support yet. Anyone may deposit any non-zero amount to a project with an active
+  agreement; deposits cannot be refunded.
+
+*Agreement-related:*
 
 - **Wallet security is the user's responsibility.** Whoever controls a contributor's private key can vote as them.
   Losing a key means that contributor can no longer approve, which blocks every future change (unanimity). There is no
@@ -114,12 +194,12 @@ relied on.
   present a pending proposal as an agreement.
 - **Frontends cannot approve on anyone's behalf.** A UI notification, email or off-chain signature is not an approval;
   only the `ProposalApproved` event from the contributor's own transaction is.
-- **Not audited.** Local Hardhat network only. Do not deploy with real funds.
+- **Not audited.** Local Hardhat network only. Do not deploy with real funds or use it to hold real money.
 
 ## Not yet designed / implemented
 
-- Revenue intake, accounting and claims (pull-payment, ETH/ERC-20)
-- Frontend flows for creating proposals and voting
+- ERC-20 / stablecoin revenue
+- Frontend flows for deposits, claims, creating proposals and voting
 - Indexing / reading contract events in the UI
 - Key loss / address rotation, proposal expiry, dispute resolution
 - Target chain selection, audits and deployment process
