@@ -6,19 +6,22 @@ CoVerse is a blockchain-powered revenue-sharing platform for collaborative conte
 documentaries, docuseries, long-form video, short-form video and podcasts. Collaborators agree on how revenue is split,
 the split is recorded on-chain, and (in later milestones) incoming revenue is distributed automatically.
 
-> **Status: Milestone 1 — project scaffold.** The dashboard shows **demo data only**. Wallet connection (read-only)
-> works; no transactions are signed or sent, nothing is deployed, and no funds are handled.
+> **Status: Milestone 2 — agreement lifecycle (contracts).** The dashboard still shows **demo data only** and does not
+> talk to the contract yet. Wallet connection (read-only) works; nothing is deployed, and no funds are handled.
 
-## What's in this milestone
+## Current state
 
 | Area | State |
 | --- | --- |
-| Frontend (React + Vite + TypeScript) | Landing/dashboard with clearly labelled demo data |
+| Frontend (React + Vite + TypeScript, browser web app) | Landing/dashboard with clearly labelled demo data |
 | MetaMask connection (ethers.js v6) | Read-only: requests account access and reads the network |
-| `CollaborationRegistry.sol` | Minimal contract that records a project and a split totalling 100%. **Holds no funds.** |
-| Contract tests (Hardhat + Chai) | Passing |
+| `CollaborationRegistry.sol` | Versioned, immutable revenue-split agreements. Changes are proposed, then need an on-chain approval from **every** affected contributor's own wallet before activating. **Holds no funds.** |
+| Contract tests (Hardhat + Chai) | Passing — see `contracts/test/` |
 | Deployments | None. Local Hardhat network only. |
-| Revenue distribution / payouts | Not implemented |
+| Revenue accounting / payouts | Not implemented — so no revenue protection exists yet |
+| UI for proposals and voting | Not implemented |
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the agreement state machine, rules and security assumptions.
 
 ## Repository layout
 
@@ -34,7 +37,7 @@ the split is recorded on-chain, and (in later milestones) incoming revenue is di
 │   │   └── test/             Vitest setup
 │   └── public/
 ├── contracts/                Hardhat workspace
-│   ├── contracts/            Solidity sources
+│   ├── contracts/            Solidity sources (CollaborationRegistry)
 │   ├── test/                 Contract tests (Mocha/Chai, TypeScript)
 │   ├── scripts/              Local-only deploy script
 │   └── hardhat.config.ts

@@ -1,7 +1,7 @@
 import { ethers, network } from "hardhat";
 
 // Local-only deployment helper. Refuses to run against anything other than a
-// local Hardhat chain — no public networks are configured in this milestone.
+// local Hardhat chain — no public networks are configured.
 async function main() {
   if (network.config.chainId !== 31337) {
     throw new Error(`Refusing to deploy to non-local network "${network.name}".`);
@@ -9,6 +9,7 @@ async function main() {
   const registry = await ethers.deployContract("CollaborationRegistry");
   await registry.waitForDeployment();
   console.log(`CollaborationRegistry deployed to ${await registry.getAddress()} on ${network.name}`);
+  console.log("Projects start with a pending initial agreement; contributors must approve from their own wallets.");
 }
 
 main().catch((err) => {

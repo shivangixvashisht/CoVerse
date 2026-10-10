@@ -9,7 +9,7 @@ const STEPS = [
   },
   {
     title: "Agree on a split",
-    body: "Record each contributor's share of a project. A registry contract with tests exists; the UI flow is next.",
+    body: "Every contributor approves each version of the split from their own wallet. The contract logic is built and tested; the in-app flow is next.",
     state: "In development",
     icon: Hammer,
   },
